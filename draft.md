@@ -8,6 +8,8 @@ This guide provides the essential Terraform knowledge needed to work effectively
 
 Terraform is an infrastructure as code (IaC) tool that lets you define and provision infrastructure using a declarative configuration language. In the context of Coder, Terraform is used to define the resources that make up your development environments.
 
+Coder is invested in Terraform and the guides on terraform.io should be considered authoritative.
+
 ## Basic Terraform Concepts
 
 ### 1. Terraform Files and HCL
@@ -289,7 +291,7 @@ data "coder_workspace" "me" {
 
 variable "workspaces_namespace" {
   description = "Kubernetes namespace where workspace pods will be deployed"
-  default     = "coder-workspaces"
+  default     = "coder"
 }
 
 variable "image" {
@@ -312,35 +314,21 @@ variable "home_disk_size" {
   default     = "10"
 }
 
-# Local variables for reuse across the configuration
-locals {
-  workspace_name = "coder-${data.coder_workspace.me.owner}-${data.coder_workspace.me.name}"
-  labels = {
-    "app.kubernetes.io/name"     = "coder-workspace"
-    "app.kubernetes.io/instance" = local.workspace_name
-    "app.kubernetes.io/part-of"  = "coder"
-    "coder.workspace_id"         = data.coder_workspace.me.id
-    "coder.workspace_name"       = data.coder_workspace.me.name
-    "coder.user_id"              = data.coder_workspace.me.owner_id
-    "coder.user_name"            = data.coder_workspace.me.owner
-  }
-  home_volume_name = "home-volume"
-}
-
 resource "coder_agent" "main" {
   os   = "linux"
   arch = "amd64"
   
   startup_script = <<-EOT
     # Install common developer tools
-    sudo apt-get update
-    sudo apt-get install -y git vim curl wget jq
+    # sudo apt-get update
+    # sudo apt-get install -y git vim curl wget jq
     
     # Set up dotfiles
     if [ -n "$DOTFILES_URI" ]; then
       git clone $DOTFILES_URI $HOME/dotfiles
       $HOME/dotfiles/install.sh
     fi
+    sleep 10 && python3 -m http.server 8000 2>&1 >/dev/null
   EOT
   
   env = {
@@ -348,25 +336,31 @@ resource "coder_agent" "main" {
   }
 }
 
-resource "coder_app" "code_server" {
+# simple http.server 'python'
+resource "coder_app" "main" {
   agent_id     = coder_agent.main.id
-  slug         = "code-server"
-  display_name = "VS Code"
-  url          = "http://localhost:8080/?folder=/home/coder"
-  icon         = "/icon/code.svg"
-  subdomain    = false
+  slug         = "python"
+  display_name = "python"
+  url          = "http://localhost:8000/"
+  subdomain    = true
+  share        = "owner"
+
+  healthcheck {
+    url       = "http://localhost:8000/"
+    interval  = 3
+    threshold = 10
+  }
 }
 
 resource "kubernetes_persistent_volume_claim" "home" {
   metadata {
-    name      = "home-${local.workspace_name}"  # Using local variable
+    name      = "home-coder-${data.coder_workspace.me.owner}-${data.coder_workspace.me.name}"
     namespace = var.workspaces_namespace
-    labels    = local.labels  # Using local labels
   }
   
   spec {
     access_modes = ["ReadWriteOnce"]
-    storage_class_name = "standard-rwo"
+    # storage_class_name = "standard-rwo"
     
     resources {
       requests = {
@@ -378,9 +372,17 @@ resource "kubernetes_persistent_volume_claim" "home" {
 
 resource "kubernetes_pod" "main" {
   metadata {
-    name      = local.workspace_name  # Using local variable
+    name      = "coder-${data.coder_workspace.me.owner}-${data.coder_workspace.me.name}"
     namespace = var.workspaces_namespace
-    labels    = local.labels  # Using local labels
+    labels = {
+      "app.kubernetes.io/name"     = var.workspaces_namespace
+      "app.kubernetes.io/instance" = "coder-${data.coder_workspace.me.owner}-${data.coder_workspace.me.name}"
+      "app.kubernetes.io/part-of"  = "coder"
+      "coder.workspace_id"         = data.coder_workspace.me.id
+      "coder.workspace_name"       = data.coder_workspace.me.name
+      "coder.user_id"              = data.coder_workspace.me.owner_id
+      "coder.user_name"            = data.coder_workspace.me.owner
+    }
   }
   
   spec {
@@ -420,13 +422,13 @@ resource "kubernetes_pod" "main" {
       # Storage
       volume_mount {
         mount_path = "/home/coder"
-        name       = local.home_volume_name  # Using local variable
+        name       = "home-volume"
       }
     }
     
     # Add storage volume
     volume {
-      name = local.home_volume_name  # Using local variable
+      name = "home-volume"
       persistent_volume_claim {
         claim_name = kubernetes_persistent_volume_claim.home.metadata.0.name
       }
@@ -451,8 +453,7 @@ output "workspace_info" {
     owner = data.coder_workspace.me.owner
     pod_name = kubernetes_pod.main.metadata.0.name
   }
-}
-```
+}```
 
 ## Best Practices for Coder Templates
 
