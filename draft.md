@@ -10,13 +10,19 @@ Terraform is an infrastructure as code (IaC) tool that lets you define and provi
 
 ## Basic Terraform Concepts
 
-### 1. Terraform Files
+### 1. Terraform Files and HCL
 
-Terraform configurations are written in HashiCorp Configuration Language (HCL) and typically stored in files with a `.tf` extension.
+Terraform configurations are written in HashiCorp Configuration Language (HCL) and typically stored in files with a `.tf` extension. HCL is a structured configuration language that is both human-readable and machine-friendly.
 
 ```terraform
 # main.tf - A simple Terraform file
 ```
+
+Key HCL features include:
+- Block syntax for defining resources, providers, and other components
+- Expressions for referencing variables and performing operations
+- Comments using the `#` or `//` symbols
+- Labels for identifying resources and blocks (e.g., resource names)
 
 ### 2. Providers
 
@@ -47,45 +53,56 @@ provider "kubernetes" {
 
 ### 3. Resources
 
-Resources are infrastructure objects that Terraform manages, such as Kubernetes pods, volumes, or cloud instances.
+Resources are infrastructure objects that Terraform manages, such as Kubernetes pods, volumes, or cloud instances. Each resource has a TYPE and a NAME (these are labels in HCL), forming a unique identifier.
 
 ```terraform
-resource "kubernetes_pod" "dev_pod" {
+resource "kubernetes_pod" "dev_pod" {  # TYPE = kubernetes_pod, NAME = dev_pod
   metadata {
-    name = "dev-pod"
+    name = "dev-pod"  # This is an attribute within the metadata block
   }
   
   spec {
     container {
-      name  = "dev-container"
-      image = "ubuntu:latest"
+      name  = "dev-container"  # Attribute
+      image = "ubuntu:latest"  # Attribute
     }
   }
 }
 ```
 
-### 4. Variables
+### 4. Variables and Locals
 
 Variables allow you to parameterize your configurations, making them more reusable.
 
 ```terraform
-variable "image" {
-  description = "Container image to use for the workspace"
-  default     = "ubuntu:latest"
+variable "image" {  # "image" is the label/name of this variable
+  description = "Container image to use for the workspace"  # Attribute
+  default     = "ubuntu:latest"  # Attribute with default value
   validation {
     condition     = contains(["ubuntu:latest", "debian:stable"], var.image)
     error_message = "Invalid image selected."
   }
 }
+
+# Local variables are computed values used within your configuration
+locals {
+  workspace_name = "coder-${data.coder_workspace.me.owner}-${data.coder_workspace.me.name}"
+  common_labels = {
+    "app.kubernetes.io/name" = "coder-workspace"
+    "coder.workspace_id"     = data.coder_workspace.me.id
+  }
+}
 ```
+
+Variables are referenced using `var.name_of_variable` and locals using `local.name_of_local`.
 
 ### 5. Outputs
 
 Outputs allow you to expose specific values from your configuration that can be used by Coder.
 
 ```terraform
-output "ip_address" {
-  value = kubernetes_pod.dev_pod.status.0.pod_ip
+output "ip_address" {  # "ip_address" is the label/name of this output
+  value = kubernetes_pod.dev_pod.status.0.pod_ip  # Attribute containing the value to output
 }
 ```
 
@@ -94,7 +111,8 @@ output "ip_address" {
 Data sources allow Terraform to fetch information from external sources.
 
 ```terraform
-data "coder_workspace" "me" {
+data "coder_workspace" "me" {  # TYPE = coder_workspace, NAME = me
+  # This data source doesn't require additional attributes
 }
 ```
 
@@ -105,11 +123,11 @@ data "coder_workspace" "me" {
 The Coder agent is required in each workspace to connect to the Coder platform.
 
 ```terraform
-resource "coder_agent" "main" {
-  os   = "linux"
-  arch = "amd64"
+resource "coder_agent" "main" {  # "main" is the label for this agent resource
+  os   = "linux"  # Attribute
+  arch = "amd64"  # Attribute
   
-  # Define startup script
+  # Define startup script (attribute with heredoc syntax)
   startup_script = <<-EOT
     # Install development tools
     apt-get update
@@ -123,10 +141,10 @@ resource "coder_agent" "main" {
 Define applications that can be accessed within the workspace.
 
 ```terraform
-resource "coder_app" "code_server" {
-  agent_id     = coder_agent.main.id
-  slug         = "code-server"
-  display_name = "VS Code"
+resource "coder_app" "code_server" {  # "code_server" is the label for this app
+  agent_id     = coder_agent.main.id  # Attribute referencing the agent's id
+  slug         = "code-server"        # Attribute
+  display_name = "VS Code"            # Attribute
   url          = "http://localhost:8080/?folder=/home/coder"
   icon         = "/icon/code.svg"
   subdomain    = false
@@ -142,12 +160,13 @@ resource "kubernetes_pod" "main" {
   metadata {
     name = "coder-${data.coder_workspace.me.owner}-${data.coder_workspace.me.name}"
     namespace = var.workspaces_namespace
+    labels = local.common_labels  # Using local variable to apply common labels
   }
   
   spec {
     container {
       name  = "dev"
-      image = var.image
+      image = var.image  # Using variable for image
       
       # Connect the agent to the pod
       command = ["sh", "-c", coder_agent.main.init_script]
@@ -193,6 +212,7 @@ resource "kubernetes_persistent_volume_claim" "home" {
   metadata {
     name      = "home-coder-${data.coder_workspace.me.owner}-${data.coder_workspace.me.name}"
     namespace = var.workspaces_namespace
+    labels    = local.common_labels  # Using the same local variable for consistent labeling
   }
   
   spec {
@@ -213,9 +233,14 @@ resource "kubernetes_persistent_volume_claim" "home" {
 ### 3. ImagePullSecret Example
 
 ```terraform
+locals {
+  # Define a local for the pod name to ensure consistency
+  pod_name = "coder-${data.coder_workspace.me.owner}-${data.coder_workspace.me.name}"
+}
+
 resource "kubernetes_pod" "main" {
   metadata {
-    name = "coder-${data.coder_workspace.me.owner}-${data.coder_workspace.me.name}"
+    name      = local.pod_name  # Using the local variable
     namespace = var.workspaces_namespace
   }
   
@@ -287,6 +312,21 @@ variable "home_disk_size" {
   default     = "10"
 }
 
+# Local variables for reuse across the configuration
+locals {
+  workspace_name = "coder-${data.coder_workspace.me.owner}-${data.coder_workspace.me.name}"
+  labels = {
+    "app.kubernetes.io/name"     = "coder-workspace"
+    "app.kubernetes.io/instance" = local.workspace_name
+    "app.kubernetes.io/part-of"  = "coder"
+    "coder.workspace_id"         = data.coder_workspace.me.id
+    "coder.workspace_name"       = data.coder_workspace.me.name
+    "coder.user_id"              = data.coder_workspace.me.owner_id
+    "coder.user_name"            = data.coder_workspace.me.owner
+  }
+  home_volume_name = "home-volume"
+}
+
 resource "coder_agent" "main" {
   os   = "linux"
   arch = "amd64"
@@ -319,8 +359,9 @@ resource "coder_app" "code_server" {
 
 resource "kubernetes_persistent_volume_claim" "home" {
   metadata {
-    name      = "home-coder-${data.coder_workspace.me.owner}-${data.coder_workspace.me.name}"
+    name      = "home-${local.workspace_name}"  # Using local variable
     namespace = var.workspaces_namespace
+    labels    = local.labels  # Using local labels
   }
   
   spec {
@@ -337,17 +378,9 @@ resource "kubernetes_persistent_volume_claim" "home" {
 
 resource "kubernetes_pod" "main" {
   metadata {
-    name      = "coder-${data.coder_workspace.me.owner}-${data.coder_workspace.me.name}"
+    name      = local.workspace_name  # Using local variable
     namespace = var.workspaces_namespace
-    labels = {
-      "app.kubernetes.io/name"     = "coder-workspace"
-      "app.kubernetes.io/instance" = "coder-${data.coder_workspace.me.owner}-${data.coder_workspace.me.name}"
-      "app.kubernetes.io/part-of"  = "coder"
-      "coder.workspace_id"         = data.coder_workspace.me.id
-      "coder.workspace_name"       = data.coder_workspace.me.name
-      "coder.user_id"              = data.coder_workspace.me.owner_id
-      "coder.user_name"            = data.coder_workspace.me.owner
-    }
+    labels    = local.labels  # Using local labels
   }
   
   spec {
@@ -387,13 +420,13 @@ resource "kubernetes_pod" "main" {
       # Storage
       volume_mount {
         mount_path = "/home/coder"
-        name       = "home-volume"
+        name       = local.home_volume_name  # Using local variable
       }
     }
     
     # Add storage volume
     volume {
-      name = "home-volume"
+      name = local.home_volume_name  # Using local variable
       persistent_volume_claim {
         claim_name = kubernetes_persistent_volume_claim.home.metadata.0.name
       }
@@ -423,14 +456,16 @@ output "workspace_info" {
 
 ## Best Practices for Coder Templates
 
-1. **Use variables extensively**: Make templates customizable through variables.
-2. **Limit resource usage**: Set appropriate CPU and memory limits to prevent workspaces from consuming too many resources.
-3. **Use persistent storage**: Ensure user data persists between workspace restarts.
-4. **Security**: Run containers with non-root users and set appropriate Kubernetes security contexts.
-5. **Parameterize templates**: Use `coder_parameter` to make templates configurable by end users.
+1. **Use variables and locals extensively**: Make templates customizable through variables and keep your code DRY with locals.
+2. **Use consistent labeling**: Define labels in locals to ensure consistency across resources.
+3. **Limit resource usage**: Set appropriate CPU and memory limits to prevent workspaces from consuming too many resources.
+4. **Use persistent storage**: Ensure user data persists between workspace restarts.
+5. **Security**: Run containers with non-root users and set appropriate Kubernetes security contexts.
+6. **Parameterize templates**: Use `coder_parameter` to make templates configurable by end users.
+7. **Understand HCL blocks and labels**: Be clear about the structure of HCL blocks, their labels, and how attributes work within blocks.
 
 ## Conclusion
 
-This guide has provided the essential Terraform knowledge needed to work with Coder templates. By understanding these concepts, you can now create, customize, and maintain your own Coder templates for various development environments.
+This guide has provided the essential Terraform knowledge needed to work with Coder templates. By understanding these concepts, including HCL syntax, blocks, labels, variables, and locals, you can now create, customize, and maintain your own Coder templates for various development environments.
 
 For more advanced templates and examples, explore the [Coder templates repository](https://github.com/coder/coder/tree/main/examples/templates).
