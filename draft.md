@@ -237,7 +237,9 @@ resource "kubernetes_pod" "main" {
 
 ## Creating a Complete Coder Template
 
-Here's a complete example combining the concepts above:
+Please use our include templates, such as the AWS K8s template for full functionality: https://github.com/coder/coder/blob/main/examples/templates/aws-linux/main.tf which will install the remote tools, and code-server! The following example will not run without modifications (namespace, pull-secret, storage-class will be different)
+
+Here's an example combining the concepts above:
 
 ```terraform
 terraform {
