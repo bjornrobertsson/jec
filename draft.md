@@ -453,7 +453,8 @@ output "workspace_info" {
     owner = data.coder_workspace.me.owner
     pod_name = kubernetes_pod.main.metadata.0.name
   }
-}```
+}
+```
 
 ## Best Practices for Coder Templates
 
